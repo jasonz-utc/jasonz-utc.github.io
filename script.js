@@ -9,17 +9,17 @@ const connectButton = document.getElementById('connect');
 const sendButton = document.getElementById('send');
 const outputArea = document.getElementById('output');
 const commandInput = document.getElementById('command');
+const canvas = document.getElementById("platformVis");
 
 let posX = 400,
   posY = 300; // Default position
-let drawInterval;
+let buffer = "";
 
 // Draw the ball at the current position
 function drawBall(x, y) {
-  const c = document.getElementById("platformVis");
-  if (c) {
-    const ctx = c.getContext("2d");
-    ctx.clearRect(0, 0, c.width, c.height);
+  if (canvas) {
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.beginPath();
     ctx.arc(x, y, 40, 0, 2 * Math.PI);
     ctx.fillStyle = "LightGray";
@@ -28,25 +28,29 @@ function drawBall(x, y) {
   }
 }
 
-// Start polling for position
-function startPolling() {
-  if (drawInterval) clearInterval(drawInterval);
-  drawInterval = setInterval(async () => {
-    if (outputStream) {
-      const writer = outputStream.getWriter();
-      await writer.write("getPos\n");
-      writer.releaseLock();
-    }
-  }, 33); // ~30 times per second
+// Send a request for position
+async function requestPosition() {
+  if (!outputStream) return;
+  const writer = outputStream.getWriter();
+  await writer.write("getPos\n");
+  writer.releaseLock();
 }
 
 // Parse incoming messages for position
 function handleSerialData(data) {
-  // Expecting: "123 456"
-  const match = data.match(/^(\d+)\s+(\d+)/);
+  // Expecting "123 456", but tolerate negatives/decimals
+  const match = data.match(/^(-?\d+\.?\d*)\s+(-?\d+\.?\d*)$/);
   if (match) {
-    posX = parseInt(match[1], 10);
-    posY = parseInt(match[2], 10);
+    let x = Math.round(parseFloat(match[1]));
+    let y = Math.round(parseFloat(match[2]));
+
+    // Clamp within canvas size (account for radius = 40)
+    const radius = 40;
+    x = Math.max(radius, Math.min(canvas.width - radius, x));
+    y = Math.max(radius, Math.min(canvas.height - radius, y));
+
+    posX = x;
+    posY = y;
     drawBall(posX, posY);
   }
 }
@@ -59,13 +63,26 @@ async function readLoop() {
       console.log('[readLoop] DONE', done);
       break;
     }
-    outputArea.value += value;
-    outputArea.scrollTop = outputArea.scrollHeight;
-    handleSerialData(value);
+
+    buffer += value;
+    let lines = buffer.split("\n");
+    buffer = lines.pop(); // save incomplete line
+
+    for (let line of lines) {
+      line = line.trim();
+      if (line) {
+        outputArea.value += line + "\n";
+        outputArea.scrollTop = outputArea.scrollHeight;
+        handleSerialData(line);
+
+        // After handling a reply, request the next
+        requestPosition();
+      }
+    }
   }
 }
 
-// Connect to serial port and start polling
+// Connect to serial port
 connectButton.addEventListener('click', async () => {
   try {
     port = await navigator.serial.requestPort();
@@ -84,7 +101,8 @@ connectButton.addEventListener('click', async () => {
     outputDone = textEncoder.readable.pipeTo(port.writable);
     outputStream = textEncoder.writable;
 
-    startPolling(); // Start sending getPos
+    // Kick off first request
+    requestPosition();
   } catch (err) {
     outputArea.value += `Error: ${err.message}\n`;
   }
