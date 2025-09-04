@@ -1,17 +1,24 @@
-<html>
-  <head>
-    <title>Ball Balancer</title>
-  </head>
-  <body>
-    <h1>Ball Balancer</h1>
-    <p>This is the web interface for the ball balancing platform. It is currently incomplete, but you can expect features such as...
-    <ul>
-      <li>Live position visualization</li>
-      <li>PID parameter tuning</li>
-      <li>Shape selection</li>
-      <li>Custom shape drawing</li>
-    </ul>
-    And much, much more!
-    </p>
-  </body>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Ball Balancer</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    textarea { width: 100%; height: 200px; margin-top: 10px; }
+    input, button { padding: 10px; font-size: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Serial Terminal</h1>
+  <button id="connect">Connect</button>
+  <div style="margin-top: 10px;">
+    <input id="command" placeholder="Type command here..." />
+    <button id="send">Send</button>
+  </div>
+  <textarea id="output" readonly placeholder="Incoming messages..."></textarea>
+
+  <script src="script.js"></script>
+</body>
 </html>
