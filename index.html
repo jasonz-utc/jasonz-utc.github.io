@@ -18,16 +18,10 @@
     <button id="send">Send</button>
   </div>
   <textarea id="output" readonly placeholder="Incoming messages..."></textarea>
-  <canvas id="platformVis" width = "800" height = "600" style="border:1px solid #000000; background-color:  #ccccc1;">
+  
+  <canvas id="platformVis" width="800" height="600" style="border:1px solid #000000; background-color: Gray; display: block; margin-left: auto; margin-right: auto;">
   </canvas>
-  <script>
-var c = document.getElementById("platformVis");
-var ctx = c.getContext("2d");
-ctx.beginPath();
-ctx.arc(400, 300, 50, 0, 2*3.1415);
-ctx.fill().
-ctx.stroke();
-</script>
+  
   <script src="script.js"></script>
 </body>
 </html>
