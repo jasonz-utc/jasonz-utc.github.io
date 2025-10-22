@@ -1,153 +1,156 @@
 let port;
 let reader;
-let inputDone;
+let outputStream;
 let outputDone;
 let inputStream;
-let outputStream;
+let inputDone;
+let isRemote = false;
 
-const connectButton = document.getElementById('connect');
-const sendButton = document.getElementById('send');
-const outputArea = document.getElementById('output');
-const commandInput = document.getElementById('command');
+const connectButton = document.getElementById("connect");
+const sendButton = document.getElementById("send");
+const outputArea = document.getElementById("output");
+const commandInput = document.getElementById("command");
+const canvas = document.getElementById("platformVis");
 
-let posX = 400,
-  posY = 300; // Default position
+let posX = canvas.width / 2;
+let posY = canvas.height / 2;
 let buffer = "";
-let drawInterval;
+let lastSend = 0; // simple rate limiter
 
-const debugMode = false; // <- set to true if you want manual send
-
-if (!debugMode) {
-  sendButton.disabled = true;
-  commandInput.disabled = true;
-}
-
-// Draw the ball at the current position
 function drawBall(x, y) {
-  const c = document.getElementById("platformVis");
-  if (c) {
-    const ctx = c.getContext("2d");
-    ctx.clearRect(0, 0, c.width, c.height);
-    ctx.beginPath();
-    ctx.arc(x, y, 40, 0, 2 * Math.PI);
-    ctx.fillStyle = "LightGray";
-    ctx.fill();
-    ctx.stroke();
-  }
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.beginPath();
+  ctx.arc(x, y, 40, 0, 2 * Math.PI);
+  ctx.fillStyle = "LightGray";
+  ctx.fill();
+  ctx.stroke();
 }
 
-// Clamp and round positions
-function sanitizePos(x, y) {
-  const c = document.getElementById("platformVis");
-  if (!c) return { x, y };
-
+function clampCoords(x, y) {
   const radius = 40;
-  const maxX = c.width - radius;
-  const maxY = c.height - radius;
-  const minX = radius;
-  const minY = radius;
-
   return {
-    x: Math.min(maxX, Math.max(minX, Math.round(x))),
-    y: Math.min(maxY, Math.max(minY, Math.round(y))),
+    x: Math.min(canvas.width - radius, Math.max(radius, Math.round(x))),
+    y: Math.min(canvas.height - radius, Math.max(radius, Math.round(y))),
   };
 }
 
-// Parse incoming messages for position
-function handleSerialLine(line) {
-  // Expecting: "123 456"
-  const match = line.match(/^(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/);
-  if (match) {
-    let x = parseFloat(match[1]);
-    let y = parseFloat(match[2]);
-    ({ x, y } = sanitizePos(x, y));
-    posX = x;
-    posY = y;
-    drawBall(posX, posY);
-  }
+function log(msg) {
+  outputArea.value += msg + "\n";
+  outputArea.scrollTop = outputArea.scrollHeight;
 }
 
-// Read serial data and handle it with line buffering
+async function sendSerial(line) {
+  if (!outputStream) return;
+  const now = Date.now();
+  if (now - lastSend < 30) return; // ~33Hz limit
+  lastSend = now;
+
+  const writer = outputStream.getWriter();
+  await writer.write(line + "\n");
+  writer.releaseLock();
+}
+
 async function readLoop() {
   const textDecoder = new TextDecoderStream();
   inputDone = port.readable.pipeTo(textDecoder.writable);
   inputStream = textDecoder.readable;
   reader = inputStream.getReader();
-
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) {
-        console.log('[readLoop] DONE', done);
-        break;
-      }
+      if (done) break;
       if (value) {
         buffer += value;
-        let lines = buffer.split(/\r?\n/);
-        buffer = lines.pop(); // hold incomplete
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop();
         for (let line of lines) {
-          if (line.trim().length > 0) {
-            outputArea.value += line + "\n";
-            outputArea.scrollTop = outputArea.scrollHeight;
-            handleSerialLine(line.trim());
-          }
+          if (line.trim()) log(line.trim());
         }
       }
     }
   } catch (err) {
-    console.error("Read error:", err);
+    log("Read error: " + err);
   }
 }
 
-// Start polling for position
-function startPolling() {
-  if (drawInterval) clearInterval(drawInterval);
-  drawInterval = setInterval(async () => {
-    if (outputStream) {
-      const writer = outputStream.getWriter();
-      await writer.write("getPos\n");
-      writer.releaseLock();
-    }
-  }, 20); // ~30Hz
-}
-
-// Connect to serial port
-connectButton.addEventListener('click', async () => {
+connectButton.addEventListener("click", async () => {
   try {
     port = await navigator.serial.requestPort();
     await port.open({ baudRate: 115200 });
-
-    outputArea.value += 'Connected to serial port\n';
-
-    readLoop();
-
     const textEncoder = new TextEncoderStream();
     outputDone = textEncoder.readable.pipeTo(port.writable);
     outputStream = textEncoder.writable;
-
-    startPolling();
+    readLoop();
+    log("Connected to serial port.");
   } catch (err) {
-    outputArea.value += `Error: ${err.message}\n`;
+    log("Error: " + err.message);
   }
 });
 
-// Send manual command (debug only)
-sendButton.addEventListener('click', async () => {
-  if (!debugMode) return;
-
+// Manual send (debug)
+sendButton.addEventListener("click", async () => {
   if (!outputStream) {
-    outputArea.value += 'Not connected.\n';
+    log("Not connected.");
+    return;
+  }
+  await sendSerial(commandInput.value);
+  commandInput.value = "";
+});
+
+// --- Control buttons ---
+const controlPanel = document.createElement("div");
+["init", "standalone", "pause", "remote"].forEach((cmd) => {
+  const btn = document.createElement("button");
+  btn.textContent = cmd.toUpperCase();
+  btn.style.margin = "5px";
+  btn.onclick = async () => {
+    await sendSerial(cmd);
+    isRemote = cmd === "remote";
+    log("Sent: " + cmd);
+    if (!isRemote) sendSerial("0,0"); // zero out when leaving remote
+  };
+  controlPanel.appendChild(btn);
+});
+document.body.insertBefore(controlPanel, canvas);
+
+// --- Mouse-based remote control ---
+function sendSetpointFromMouse(e) {
+  if (!isRemote || !outputStream) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const inside =
+    e.clientX >= rect.left &&
+    e.clientX <= rect.right &&
+    e.clientY >= rect.top &&
+    e.clientY <= rect.bottom;
+
+  if (!inside) {
+    drawBall(canvas.width / 2, canvas.height / 2);
+    sendSerial("0,0");
     return;
   }
 
-  const command = commandInput.value + '\n';
-  const writer = outputStream.getWriter();
-  await writer.write(command);
-  writer.releaseLock();
-  commandInput.value = '';
+  const rawX = e.clientX - rect.left;
+  const rawY = e.clientY - rect.top;
+  const { x: clampedX, y: clampedY } = clampCoords(rawX, rawY);
+  posX = clampedX;
+  posY = clampedY;
+  drawBall(posX, posY);
+
+  // Map 0–800 → −500–+500 and 0–600 → −500–+500
+  const scaledX = Math.round((posX / canvas.width) * 1000 - 500);
+  const scaledY = Math.round((posY / canvas.height) * 1000 - 500);
+
+  sendSerial(`${scaledX},${scaledY}`);
+}
+
+canvas.addEventListener("mousemove", sendSetpointFromMouse);
+canvas.addEventListener("mouseleave", () => {
+  if (isRemote) {
+    drawBall(canvas.width / 2, canvas.height / 2);
+    sendSerial("0,0");
+  }
 });
 
-// Initial draw on page load
-document.addEventListener('DOMContentLoaded', () => {
-  drawBall(posX, posY);
-});
+document.addEventListener("DOMContentLoaded", () => drawBall(posX, posY));
